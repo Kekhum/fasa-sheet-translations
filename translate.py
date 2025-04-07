@@ -35,6 +35,8 @@ def should_translate(text):
         bool: True if the text contains at least one letter, False otherwise.
     """
     text = text.strip()
+    if re.search(r'{{|@{|%{', text):
+        return False
     return bool(re.search(r'[A-Za-zĄąĆćĘęŁłŃńÓóŚśŹźŻż]', text))
 
 def add_translation_key(key):
@@ -87,7 +89,7 @@ def process_tag(tag):
     # Process the 'title' attribute if it exists
     if tag.has_attr('title'):
         title_text = tag['title'].strip()
-        if title_text and should_translate(title_text) and "@{" not in title_text and "%{" not in title_text:
+        if title_text and should_translate(title_text):
             normalized_title = normalize_text(title_text)
             tag['data-i18n-title'] = normalized_title
             add_translation_key(normalized_title)
