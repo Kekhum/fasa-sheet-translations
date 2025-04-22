@@ -93,7 +93,7 @@ def process_tag(tag, soup):
                 # to preserve formatting, we skip extraction
                 continue
         elif isinstance(child, Tag):
-            if child.name.lower() in ('br', 'hr'):
+            if child.name.lower() in ('br', 'hr', 'b', 'p'):
                 continue
             if child.name.lower() == 'span' and child.has_attr('i18n'):
                 continue
