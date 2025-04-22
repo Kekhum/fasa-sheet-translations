@@ -1,5 +1,6 @@
 import json
 from bs4 import BeautifulSoup, NavigableString, Comment
+from bs4.element import Tag
 import re
 
 # Global dictionary to store unique translation keys
@@ -7,132 +8,112 @@ translation_keys = {}
 
 def normalize_text(text):
     """
-    Normalize the input text by removing excess whitespace.
-    
-    - Replaces any sequence of whitespace characters (spaces, tabs, newlines)
-      with a single space.
-    - Trims the text to remove leading and trailing whitespace.
-    
-    Args:
-        text (str): The text to be normalized.
-        
-    Returns:
-        str: The normalized text.
+    Normalize input by collapsing whitespace within the core text.
     """
     return re.sub(r'\s+', ' ', text).strip()
 
 def should_translate(text):
     """
-    Determine if the given text should be considered for translation.
-    
-    The function checks if the text contains at least one letter (including 
-    Polish characters), which indicates that it is meaningful text for translation.
-    
-    Args:
-        text (str): The text to check.
-        
-    Returns:
-        bool: True if the text contains at least one letter, False otherwise.
+    Return True if text contains letters (including Polish).
     """
-    text = text.strip()
-    if re.search(r'{{|@{|%{', text):
+    if re.search(r'{{', text):
         return False
-    return bool(re.search(r'[A-Za-zĄąĆćĘęŁłŃńÓóŚśŹźŻż]', text))
+    return bool(re.search(r'[A-Za-zĄąĆćĘęŁłŃńÓóŚśŹźŻż]', text.strip()))
 
 def add_translation_key(key):
     """
-    Add a translation key to the global dictionary if it is not already present.
-    
-    The key is normalized to remove any excess whitespace before being stored.
-    
-    Args:
-        key (str): The translation key to add.
+    Register a translation key if new.
     """
-    normalized_key = normalize_text(key)
-    if normalized_key not in translation_keys:
-        translation_keys[normalized_key] = normalized_key
+    norm = normalize_text(key)
+    translation_keys.setdefault(norm, norm)
 
-def process_tag(tag):
+
+def wrap_text_with_whitespace(text, soup):
     """
-    Process an individual HTML tag to add translatable attributes.
-    
-    This function performs the following steps:
-    
-    1. Skips processing for <script> tags (and potentially others that should be ignored).
-    2. Extracts the first non-empty direct text node (ignoring comments and nested texts).
-       If the text is deemed translatable, a 'data-i18n' attribute is added to the tag
-       with the normalized text, and the translation key is recorded.
-    3. If the tag has a 'title' attribute, and the text does not contain template 
-       placeholders (e.g., "@{" or "%{"), it adds a 'data-i18n-title' attribute with 
-       the normalized text and records the key.
-    4. Processes the 'placeholder' attribute in a similar manner.
-    
-    Args:
-        tag (bs4.element.Tag): The HTML tag to process.
+    Given a text node string, split into leading ws, core, trailing ws,
+    wrap core in <span i18n="...">core</span>, and return list of nodes.
     """
-    # Skip <script> tags (or any tags we do not wish to process)
-    if tag.name.lower() == "script":
+    # Separate leading/trailing whitespace
+    m = re.match(r'^(\s*)(.*?)(\s*)$', text, re.DOTALL)
+    leading, core, trailing = m.groups()
+    nodes = []
+    if leading:
+        nodes.append(NavigableString(leading))
+    if core and should_translate(core):
+        norm = normalize_text(core)
+        add_translation_key(norm)
+        span = soup.new_tag('span')
+        span['i18n'] = norm
+        span.string = core
+        nodes.append(span)
+    else:
+        # no wrap if no core or not translatable
+        nodes.append(NavigableString(core))
+    if trailing:
+        nodes.append(NavigableString(trailing))
+    return nodes
+
+
+def process_tag(tag, soup):
+    """
+    Recursively wrap text nodes and attributes for translation.
+    Skip <script>, preserve <br>, <hr>, and skip existing spans.
+    """
+    name = tag.name.lower()
+    if name == 'script':
         return
 
-    # Retrieve only direct text nodes (ignoring comments and empty nodes)
-    direct_texts = [
-        node.strip() for node in tag.contents
-        if isinstance(node, NavigableString) and not isinstance(node, Comment) and node.strip()
-    ]
-    if direct_texts:
-        text_to_use = direct_texts[0]
-        if should_translate(text_to_use):
-            normalized_text = normalize_text(text_to_use)
-            tag['data-i18n'] = normalized_text
-            add_translation_key(normalized_text)
-
-    # Process the 'title' attribute if it exists
+    # Attributes
     if tag.has_attr('title'):
-        title_text = tag['title'].strip()
-        if title_text and should_translate(title_text):
-            normalized_title = normalize_text(title_text)
-            tag['data-i18n-title'] = normalized_title
-            add_translation_key(normalized_title)
-
-    # Process the 'placeholder' attribute if it exists
+        txt = tag['title']
+        if txt and should_translate(txt) and '@{' not in txt and '%{' not in txt:
+            norm = normalize_text(txt)
+            tag['data-i18n-title'] = norm
+            add_translation_key(norm)
     if tag.has_attr('placeholder'):
-        placeholder_text = tag['placeholder'].strip()
-        if placeholder_text and should_translate(placeholder_text):
-            normalized_placeholder = normalize_text(placeholder_text)
-            tag['data-i18n-placeholder'] = normalized_placeholder
-            add_translation_key(normalized_placeholder)
+        ph = tag['placeholder']
+        if ph and should_translate(ph):
+            norm = normalize_text(ph)
+            tag['data-i18n-placeholder'] = norm
+            add_translation_key(norm)
+
+    # Process children
+    for child in list(tag.contents):
+        if isinstance(child, NavigableString) and not isinstance(child, Comment):
+            text = str(child)
+            if text.strip():
+                parent = child.parent
+                # skip if already wrapped
+                if not (isinstance(parent, Tag) and parent.has_attr('i18n')):
+                    new_nodes = wrap_text_with_whitespace(text, soup)
+                    child.replace_with(*new_nodes)
+                # else leave as-is
+            else:
+                # remove pure whitespace node? keep indentation though
+                # to preserve formatting, we skip extraction
+                continue
+        elif isinstance(child, Tag):
+            if child.name.lower() in ('br', 'hr'):
+                continue
+            if child.name.lower() == 'span' and child.has_attr('i18n'):
+                continue
+            process_tag(child, soup)
+
 
 def process_html(html_content):
     """
-    Parse and process the HTML content.
-    
-    This function uses BeautifulSoup to parse the input HTML, iterates over every tag,
-    and processes each tag to add translation-related attributes where applicable.
-    
-    Args:
-        html_content (str): The HTML content to process.
-        
-    Returns:
-        str: The modified HTML content as a string.
+    Parse and process HTML content.
     """
     soup = BeautifulSoup(html_content, 'html.parser')
     for tag in soup.find_all(True):
-        process_tag(tag)
+        process_tag(tag, soup)
     return str(soup)
 
-if __name__ == "__main__":
-    # Load the original HTML file
-    with open("Earthdawn.html", "r", encoding="utf-8") as f:
-        html_content = f.read()
-
-    # Process the HTML to add translation attributes and collect translation keys
-    processed_html = process_html(html_content)
-
-    # Save the modified HTML to a new file
-    with open("Earthdawn_translated.html", "w", encoding="utf-8") as f:
-        f.write(processed_html)
-
-    # Save the unique translation keys to a JSON file
-    # The keys and values are identical and normalized (free of excess whitespace)
-    with open("translations.json", "w", encoding="utf-8") as f:
+if __name__ == '__main__':
+    with open('Earthdawn.html', 'r', encoding='utf-8') as f:
+        html = f.read()
+    processed = process_html(html)
+    with open('Earthdawn_translated.html', 'w', encoding='utf-8') as f:
+        f.write(processed)
+    with open('translations.json', 'w', encoding='utf-8') as f:
         json.dump(translation_keys, f, ensure_ascii=False, indent=4)

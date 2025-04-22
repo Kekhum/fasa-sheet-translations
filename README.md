@@ -3,9 +3,7 @@ This script was created exclusively for translating the [character sheet](https:
 It has not been tested on other sheets, so it might not work.
 
 ## TODO
-1. Add translation to TAGS separated by `<br/>`
-2. Add translation to Rolltemplate
-3. Find out if FASA find this script usefull
+1. Find out if FASA find this script usefull
 
 ## Info
 Author: Marcin "Marenioo" Stefanko  
