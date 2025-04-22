@@ -29,7 +29,7 @@ It also creates a JSON translation file in the following format:
 ```
 
 
-Due to the complexity of the processed HTML, the script will **NOT** handle any data within `<script>` elements, nor will it process titles or placeholders whose values use macros such as `@{}` or `%{}`.
+Due to the complexity of the processed HTML, the script will **NOT** handle any data within `<script>` elements.
 
 ## Usage
 
