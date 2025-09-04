@@ -8,9 +8,12 @@ translation_keys = {}
 
 def normalize_text(text):
     """
-    Normalize input by collapsing whitespace within the core text.
+    Normalize input by preserving multiple spaces but trimming edges.
+    Only collapse newlines and tabs to single space.
     """
-    return re.sub(r'\s+', ' ', text).strip()
+    # Replace newlines and tabs with single space, but preserve multiple spaces
+    text = re.sub(r'[\n\t\r]+', ' ', text)
+    return text.strip()
 
 def should_translate(text):
     """
@@ -104,10 +107,28 @@ def process_html(html_content):
     """
     Parse and process HTML content.
     """
+    # Use html.parser with specific formatter to preserve original HTML structure
     soup = BeautifulSoup(html_content, 'html.parser')
     for tag in soup.find_all(True):
         process_tag(tag, soup)
-    return str(soup)
+    
+    # Convert back to string with custom formatting
+    html_output = str(soup)
+    
+    # Fix boolean attributes that BeautifulSoup converts
+    # Replace readonly="readonly" with readonly, hidden="hidden" with hidden, etc.
+    # Also handle empty string versions
+    boolean_attrs = ['readonly', 'hidden', 'disabled', 'checked', 'selected', 'multiple', 'required']
+    for attr in boolean_attrs:
+        # Handle both attr="attr" and attr="" patterns
+        html_output = re.sub(f'{attr}="{attr}"', attr, html_output)
+        html_output = re.sub(f'{attr}=""', attr, html_output)
+    
+    # Preserve original input tag closing style (remove self-closing /)
+    # Only for input tags, keep /> for other self-closing tags
+    html_output = re.sub(r'<input([^>]*)/>', r'<input\1>', html_output)
+    
+    return html_output
 
 if __name__ == '__main__':
     with open('Earthdawn.html', 'r', encoding='utf-8') as f:
