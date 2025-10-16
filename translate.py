@@ -34,7 +34,7 @@ def add_translation_key(key):
 def wrap_text_with_whitespace(text, soup):
     """
     Given a text node string, split into leading ws, core, trailing ws,
-    wrap core in <span i18n="...">core</span>, and return list of nodes.
+    wrap core in <span data-i18n="...">core</span>, and return list of nodes.
     """
     # Separate leading/trailing whitespace
     m = re.match(r'^(\s*)(.*?)(\s*)$', text, re.DOTALL)
@@ -46,7 +46,7 @@ def wrap_text_with_whitespace(text, soup):
         norm = normalize_text(core)
         add_translation_key(norm)
         span = soup.new_tag('span')
-        span['i18n'] = norm
+        span['data-i18n'] = norm
         span.string = core
         nodes.append(span)
     else:
@@ -77,7 +77,7 @@ def process_tag(tag, soup):
         ph = tag['placeholder']
         if ph and should_translate(ph):
             norm = normalize_text(ph)
-            tag['data-i18n-placeholder'] = norm
+            tag['data--placeholder'] = norm
             add_translation_key(norm)
 
     # Process children
@@ -87,7 +87,7 @@ def process_tag(tag, soup):
             if text.strip():
                 parent = child.parent
                 # skip if already wrapped
-                if not (isinstance(parent, Tag) and parent.has_attr('i18n')):
+                if not (isinstance(parent, Tag) and parent.has_attr('data-i18n')):
                     new_nodes = wrap_text_with_whitespace(text, soup)
                     child.replace_with(*new_nodes)
                 # else leave as-is
@@ -98,7 +98,7 @@ def process_tag(tag, soup):
         elif isinstance(child, Tag):
             if child.name.lower() in ('br', 'hr', 'b', 'p'):
                 continue
-            if child.name.lower() == 'span' and child.has_attr('i18n'):
+            if child.name.lower() == 'span' and child.has_attr('data-i18n'):
                 continue
             process_tag(child, soup)
 
