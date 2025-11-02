@@ -8,7 +8,7 @@ It has not been tested on other sheets, so it might not work.
 ## Info
 Author: Marcin "Marenioo" Stefanko
 License: GNU GPL
-Version: 2.0 (2025-10-23)
+Version: 2.1 (2025-11-02)
 
 ## How Does It Work?
 The script traverses the HTML tags and attempts to locate any meaningful text within them—even when scanning nested tags.
@@ -114,6 +114,14 @@ Edit `translations.json` and replace English values with Polish translations:
 
 ### Step 3: Use in Roll20
 Upload the translated HTML to Roll20 character sheet system. The i18n system will automatically use the translations from the JSON file.
+
+## What's Changed in Version 2.1 (2025-11-02)
+
+### Critical Fixes from Additional Jiboux Feedback:
+1. **Option values preserved** - Option elements NEVER have their `value` attributes translated (prevents breaking automation)
+2. **Removed data-i18n-value** - Completely removed value translation as it breaks Roll20 automation
+3. **Mixed content spans fixed** - Text in spans with inputs is now wrapped in nested spans, preserving the inputs
+4. **Quote escaping improved** - Proper handling of quotes in attributes to avoid Roll20 parser errors
 
 ## What's Changed in Version 2.0
 

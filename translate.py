@@ -6,21 +6,22 @@ from pathlib import Path
 from bs4 import BeautifulSoup, NavigableString, Comment
 from bs4.element import Tag
 import re
+import html
 
 # Global dictionary to store unique translation keys
 translation_keys = {}
 
 # Configuration
 SKIPPED_TAGS = {'br', 'hr', 'script', 'style', 'meta', 'link'}
-PRESERVED_FORMATTING_TAGS = {'b', 'i', 'strong', 'em', 'u', 'code', 'kbd', 'mark', 'small', 'sub', 'sup'}
+PRESERVED_FORMATTING_TAGS = {'b', 'i', 'strong', 'em', 'u', 'code', 'kbd', 'mark', 'small', 'sub', 'sup', 'p'}
 TEMPLATE_PATTERNS = [r'{{', r'@{', r'%{', r'\${', r'#{']  # Common template syntax patterns
+# REMOVED 'value' from translatable attributes - values should NOT be translated
 TRANSLATABLE_ATTRIBUTES = {
     'title': 'data-i18n-title',
     'placeholder': 'data-i18n-placeholder',
     'alt': 'data-i18n-alt',
     'aria-label': 'data-i18n-aria-label',
-    'aria-description': 'data-i18n-aria-description',
-    'value': 'data-i18n-value'  # for buttons and submit inputs
+    'aria-description': 'data-i18n-aria-description'
 }
 
 # Setup logging
@@ -66,6 +67,14 @@ def add_translation_key(key):
     if norm not in translation_keys:
         logger.debug(f"Added translation key: {norm}")
         translation_keys[norm] = norm
+
+def escape_attribute_value(value):
+    """
+    Properly escape attribute values for HTML.
+    Converts quotes to HTML entities to avoid nesting issues.
+    """
+    # Escape quotes to avoid issues with nested quotes
+    return html.escape(value, quote=True)
 
 
 def wrap_text_with_whitespace(text, soup):
@@ -113,15 +122,11 @@ def process_tag(tag, soup, config=None):
     for attr_name, i18n_attr in TRANSLATABLE_ATTRIBUTES.items():
         if tag.has_attr(attr_name):
             attr_value = tag[attr_name]
-            # Special handling for input value attribute - only for specific types
-            if attr_name == 'value' and tag.name.lower() == 'input':
-                input_type = tag.get('type', 'text').lower()
-                if input_type not in ['button', 'submit', 'reset']:
-                    continue
 
             if attr_value and should_translate(attr_value):
                 norm = normalize_text(attr_value)
-                tag[i18n_attr] = norm
+                # Use escaped value for the attribute to avoid quote issues
+                tag[i18n_attr] = escape_attribute_value(norm)
                 # Remove the original attribute to avoid duplication
                 if config.get('remove_original_attrs', True):
                     del tag[attr_name]
@@ -131,46 +136,55 @@ def process_tag(tag, soup, config=None):
     # Gather all direct text content (excluding child tags)
     tag_text_content = ''.join([str(c) for c in tag.contents if isinstance(c, NavigableString) and not isinstance(c, Comment)])
 
+    # Special handling for OPTION elements - NEVER translate their value attribute
+    if name == 'option':
+        # Only process the text content of option, never the value
+        if tag_text_content and should_translate(tag_text_content):
+            norm = normalize_text(tag_text_content)
+            tag['data-i18n'] = escape_attribute_value(norm)
+            tag.clear()  # Clear the content - it will be replaced by translation
+            add_translation_key(norm)
+        return  # Don't process children of option tags
+
     # Check if we can add data-i18n directly to this tag
     # This works for tags with only text content or tags where all text should be replaced
     if tag_text_content and should_translate(tag_text_content):
         has_only_text = all(isinstance(c, NavigableString) for c in tag.contents)
+        child_tags = [c for c in tag.contents if isinstance(c, Tag)]
 
-        # Always add data-i18n to the tag if it only has text (no child tags)
+        # Special handling for tags with mixed content (text + input elements)
+        # If tag has both text and child elements, wrap text in nested spans
+        has_input_children = any(
+            c.name.lower() in {'input', 'select', 'textarea', 'button'}
+            for c in child_tags
+        )
+
+        if has_input_children and tag_text_content.strip():
+            # Mixed content case - wrap text nodes in spans with data-i18n
+            # Keep the parent structure intact
+            for child in list(tag.contents):
+                if isinstance(child, NavigableString) and not isinstance(child, Comment):
+                    text = str(child)
+                    if text.strip() and should_translate(text):
+                        norm = normalize_text(text)
+                        new_span = soup.new_tag('span')
+                        new_span['data-i18n'] = escape_attribute_value(norm)
+                        child.replace_with(new_span)
+                        add_translation_key(norm)
+            # Process child tags for their attributes
+            for child in child_tags:
+                if isinstance(child, Tag):
+                    process_tag(child, soup, config)
+            return
+
+        # Simple text-only case - add data-i18n to the tag itself
         if has_only_text:
             norm = normalize_text(tag_text_content)
-            tag['data-i18n'] = norm
+            tag['data-i18n'] = escape_attribute_value(norm)
             # Clear the content - it will be replaced by translation
             tag.clear()
             add_translation_key(norm)
             return  # Don't process children since we handled the whole tag
-
-        # For tags with child elements, check if we should still add data-i18n to parent
-        # This is for cases like <span class="sheet-label">Label: <input></span>
-        # where we want the span to have data-i18n for all its text content
-        child_tags = [c for c in tag.contents if isinstance(c, Tag)]
-
-        # Only add data-i18n to parent if:
-        # 1. It's not a preserved formatting tag (b, i, etc)
-        # 2. All child tags are either inputs or other non-text elements
-        if name not in preserved_tags:
-            all_children_non_text = all(
-                c.name.lower() in {'input', 'select', 'textarea', 'button', 'img', 'br', 'hr'}
-                for c in child_tags
-            )
-            if all_children_non_text and tag_text_content.strip():
-                norm = normalize_text(tag_text_content)
-                tag['data-i18n'] = norm
-                # Remove only text nodes, keep child tags
-                for child in list(tag.contents):
-                    if isinstance(child, NavigableString):
-                        child.extract()
-                add_translation_key(norm)
-                # Still need to process child tags for their attributes
-                for child in child_tags:
-                    if isinstance(child, Tag):
-                        process_tag(child, soup, config)
-                return
 
     # Process children normally if we couldn't add data-i18n to the parent
     for child in list(tag.contents):
@@ -220,7 +234,7 @@ def process_html(html_content, config=None):
     
     # Convert back to string with custom formatting
     html_output = str(soup)
-    
+
     # Fix boolean attributes that BeautifulSoup converts
     # Replace readonly="readonly" with readonly, hidden="hidden" with hidden, etc.
     # Also handle empty string versions
@@ -229,11 +243,17 @@ def process_html(html_content, config=None):
         # Handle both attr="attr" and attr="" patterns
         html_output = re.sub(f'{attr}="{attr}"', attr, html_output)
         html_output = re.sub(f'{attr}=""', attr, html_output)
-    
+
     # Preserve original input tag closing style (remove self-closing /)
     # Only for input tags, keep /> for other self-closing tags
     html_output = re.sub(r'<input([^>]*)/>', r'<input\1>', html_output)
-    
+
+    # Unescape HTML entities in data-i18n attributes back to their original form
+    # This is needed because we escaped them earlier but want them readable in the output
+    html_output = re.sub(r'data-i18n([^=]*)="([^"]*)"',
+                        lambda m: f'data-i18n{m.group(1)}="{html.unescape(m.group(2))}"',
+                        html_output)
+
     return html_output
 
 def main():
