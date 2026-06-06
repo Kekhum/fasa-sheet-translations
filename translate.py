@@ -6,7 +6,6 @@ from pathlib import Path
 from bs4 import BeautifulSoup, NavigableString, Comment
 from bs4.element import Tag
 import re
-import html
 
 # Global dictionary to store unique translation keys
 translation_keys = {}
@@ -68,15 +67,6 @@ def add_translation_key(key):
         logger.debug(f"Added translation key: {norm}")
         translation_keys[norm] = norm
 
-def escape_attribute_value(value):
-    """
-    Properly escape attribute values for HTML.
-    Converts quotes to HTML entities to avoid nesting issues.
-    """
-    # Escape quotes to avoid issues with nested quotes
-    return html.escape(value, quote=True)
-
-
 def wrap_text_with_whitespace(text, soup):
     """
     Given a text node string, split into leading ws, core, trailing ws,
@@ -125,8 +115,8 @@ def process_tag(tag, soup, config=None):
 
             if attr_value and should_translate(attr_value):
                 norm = normalize_text(attr_value)
-                # Use escaped value for the attribute to avoid quote issues
-                tag[i18n_attr] = escape_attribute_value(norm)
+                # BeautifulSoup escapes the attribute value on serialization
+                tag[i18n_attr] = norm
                 # Remove the original attribute to avoid duplication
                 if config.get('remove_original_attrs', True):
                     del tag[attr_name]
@@ -141,7 +131,7 @@ def process_tag(tag, soup, config=None):
         # Only process the text content of option, never the value
         if tag_text_content and should_translate(tag_text_content):
             norm = normalize_text(tag_text_content)
-            tag['data-i18n'] = escape_attribute_value(norm)
+            tag['data-i18n'] = norm
             tag.clear()  # Clear the content - it will be replaced by translation
             add_translation_key(norm)
         return  # Don't process children of option tags
@@ -168,7 +158,7 @@ def process_tag(tag, soup, config=None):
                     if text.strip() and should_translate(text):
                         norm = normalize_text(text)
                         new_span = soup.new_tag('span')
-                        new_span['data-i18n'] = escape_attribute_value(norm)
+                        new_span['data-i18n'] = norm
                         child.replace_with(new_span)
                         add_translation_key(norm)
             # Process child tags for their attributes
@@ -180,7 +170,7 @@ def process_tag(tag, soup, config=None):
         # Simple text-only case - add data-i18n to the tag itself
         if has_only_text:
             norm = normalize_text(tag_text_content)
-            tag['data-i18n'] = escape_attribute_value(norm)
+            tag['data-i18n'] = norm
             # Clear the content - it will be replaced by translation
             tag.clear()
             add_translation_key(norm)
@@ -248,11 +238,12 @@ def process_html(html_content, config=None):
     # Only for input tags, keep /> for other self-closing tags
     html_output = re.sub(r'<input([^>]*)/>', r'<input\1>', html_output)
 
-    # Unescape HTML entities in data-i18n attributes back to their original form
-    # This is needed because we escaped them earlier but want them readable in the output
-    html_output = re.sub(r'data-i18n([^=]*)="([^"]*)"',
-                        lambda m: f'data-i18n{m.group(1)}="{html.unescape(m.group(2))}"',
-                        html_output)
+    # NOTE: do NOT manually escape/unescape data-i18n attribute values.
+    # BeautifulSoup escapes attribute values correctly on serialization
+    # (e.g. & -> &amp;), and the browser/Roll20 decodes them back to the
+    # exact JSON key on read. Manual escaping here caused double-escaping
+    # (&#x27;, &quot;, &amp; left in the output), breaking the match between
+    # the data-i18n value and the translations.json key.
 
     return html_output
 
@@ -298,10 +289,10 @@ def main():
         # Read input file
         logger.info(f"Reading input file: {args.input}")
         with open(args.input, 'r', encoding='utf-8') as f:
-            html = f.read()
+            html_content = f.read()
 
         # Process HTML
-        processed = process_html(html, config)
+        processed = process_html(html_content, config)
 
         # Write output HTML
         logger.info(f"Writing processed HTML to: {output_file}")
