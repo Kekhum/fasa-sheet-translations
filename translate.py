@@ -58,6 +58,30 @@ def should_translate(text):
         return False
     return bool(re.search(r'[A-Za-zĄąĆćĘęŁłŃńÓóŚśŹźŻż]', stripped))
 
+def strip_template_macros(text):
+    """
+    Remove Roll20 macro tokens (@{...}, %{...}, ?{...}, {{...}}, ${...}, #{...})
+    so we can inspect the remaining human-readable text.
+    """
+    text = re.sub(r'\{\{[^{}]*\}\}', '', text)
+    text = re.sub(r'[@%?$#]\{[^{}]*\}', '', text)
+    return text
+
+def should_translate_attr(text):
+    """
+    Like should_translate, but for translatable ATTRIBUTES (title, placeholder,
+    alt, aria-*). Roll20 attributes such as tooltips often mix a macro token with
+    real text (e.g. "%{selected|Take-Damage} Apply Damage to this Character.").
+    Translate when there is real translatable text left once macros are stripped;
+    the macro stays inside the data-i18n key and translators reproduce it verbatim.
+    Pure-macro values (e.g. a bare "@{Damage}" or a roll query) are skipped.
+    """
+    stripped = text.strip()
+    if len(stripped) <= 1:
+        return False
+    rest = strip_template_macros(stripped)
+    return bool(re.search(r'[A-Za-zĄąĆćĘęŁłŃńÓóŚśŹźŻż]{2,}', rest))
+
 def add_translation_key(key):
     """
     Register a translation key if new.
@@ -113,7 +137,7 @@ def process_tag(tag, soup, config=None):
         if tag.has_attr(attr_name):
             attr_value = tag[attr_name]
 
-            if attr_value and should_translate(attr_value):
+            if attr_value and should_translate_attr(attr_value):
                 norm = normalize_text(attr_value)
                 # BeautifulSoup escapes the attribute value on serialization
                 tag[i18n_attr] = norm
