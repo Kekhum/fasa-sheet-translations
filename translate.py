@@ -5,7 +5,29 @@ import sys
 from pathlib import Path
 from bs4 import BeautifulSoup, NavigableString, Comment
 from bs4.element import Tag
+from bs4.formatter import HTMLFormatter, EntitySubstitution
 import re
+
+
+class Roll20Formatter(HTMLFormatter):
+    """
+    Serialize like the default 'minimal' formatter (escape & < >, leave
+    accented/Polish characters raw) BUT always wrap attributes in double
+    quotes and encode any embedded " as &quot;.
+
+    BeautifulSoup's default switches an attribute to single quotes when its
+    value contains a " (e.g. data-i18n='"Durability"' or a tooltip mentioning
+    "Modifiers"). Roll20's i18n parser then fails to read the value / treats
+    the JSON as invalid. Forcing &quot; inside double-quoted attributes keeps
+    the markup valid; the browser decodes &quot; back to " so the value still
+    matches the exact key in translations.json.
+    """
+    def __init__(self):
+        super().__init__(entity_substitution=EntitySubstitution.substitute_xml)
+
+    def quoted_attribute_value(self, value):
+        return '"' + value.replace('"', '&quot;') + '"'
+
 
 # Global dictionary to store unique translation keys
 translation_keys = {}
@@ -246,8 +268,11 @@ def process_html(html_content, config=None):
     logger.info(f"Processed {tags_processed} tags")
     logger.info(f"Found {len(translation_keys)} unique translation keys")
     
-    # Convert back to string with custom formatting
-    html_output = str(soup)
+    # Convert back to string with custom formatting.
+    # Roll20Formatter forces double-quoted attributes with &quot; for embedded
+    # quotes, otherwise BeautifulSoup would emit single-quoted attributes that
+    # Roll20's i18n parser rejects.
+    html_output = soup.decode(formatter=Roll20Formatter())
 
     # Fix boolean attributes that BeautifulSoup converts
     # Replace readonly="readonly" with readonly, hidden="hidden" with hidden, etc.
@@ -262,12 +287,13 @@ def process_html(html_content, config=None):
     # Only for input tags, keep /> for other self-closing tags
     html_output = re.sub(r'<input([^>]*)/>', r'<input\1>', html_output)
 
-    # NOTE: do NOT manually escape/unescape data-i18n attribute values.
-    # BeautifulSoup escapes attribute values correctly on serialization
-    # (e.g. & -> &amp;), and the browser/Roll20 decodes them back to the
-    # exact JSON key on read. Manual escaping here caused double-escaping
-    # (&#x27;, &quot;, &amp; left in the output), breaking the match between
-    # the data-i18n value and the translations.json key.
+    # NOTE: do NOT manually escape/unescape data-i18n attribute values with
+    # regex here. Escaping is handled correctly by Roll20Formatter during
+    # serialization (& -> &amp;, < > -> &lt; &gt;, embedded " -> &quot;, in
+    # double-quoted attributes), and the browser/Roll20 decodes them back to
+    # the exact JSON key on read. Manual escaping previously caused double-
+    # escaping (&#x27;, &quot;, &amp; left in the output), breaking the match
+    # between the data-i18n value and the translations.json key.
 
     return html_output
 
